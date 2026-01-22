@@ -1,3 +1,15 @@
+/**
+ * @file main.cpp
+ * @brief Red bird racing vehicle control system for electric vehicle using MCP2515 CAN controllers
+ * 
+ * This program reads accelerator and brake pedal positions, manages vehicle states,
+ * anc communicates with motor and battery management systems over CAN bus
+ * 
+ * @author Arnav
+ * @version 1.0
+ * @date 2026-21-01
+ */
+
 #include <Arduino.h>
 #include <MCP2515.h>  
 
@@ -52,6 +64,28 @@ uint32_t faultStartTime   = 0;                ///< Timestamp when APPS fault fir
 bool     wasFaulty        = false;            ///< APPS fault currently active
 int16_t  torque           = 0;                ///< Current torque request
 bool     bms_ready        = false;            ///< BMS permission received
+
+/**
+ * @brief Fixed points for pedal to torque mapping (piecewise linear)
+ */
+const uint16_t PEDAL_POINTS[5] = {0, 100, 200, 300, 1023};  ///< Pedal input points (0-1023)
+const int16_t TORQUE_POINTS[5] = {0, 500, 1500, 3000, 32767}; ///< Corresponding torque outputs
+
+/**
+ * @brief Linear interpolation function for pedal to torque mapping
+ * @param pedal The current pedal reading (0-1023)
+ * @return Interpolated torque value
+ */
+int16_t interpolateTorque(uint16_t pedal) {
+  for (int i = 0; i < 4; i++) {  // Loop through segments
+    if (pedal <= PEDAL_POINTS[i + 1]) {
+      // Linear interpolation between point i and i+1
+      int16_t slope = (TORQUE_POINTS[i+1] - TORQUE_POINTS[i]) / (PEDAL_POINTS[i+1] - PEDAL_POINTS[i]);
+      return TORQUE_POINTS[i] + (slope * (pedal - PEDAL_POINTS[i]));
+    }
+  }
+  return TORQUE_POINTS[4];  // Max value if pedal > last point
+}
 
 /**
  * @brief Initializes pins, states and CAN controllers
@@ -174,6 +208,9 @@ void loop() {
 
       // Calculate average pedal position
       int16_t avgPedal = (apps5V + (apps3V3 * 50 / 33)) / 2;
+
+      // Improved torque calculation with interpolation
+      torque = interpolateTorque(avgPedal);
 
       // Calculate torque
       if (FLIP_MOTOR) {
